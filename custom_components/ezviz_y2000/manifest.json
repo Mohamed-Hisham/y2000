@@ -1,10 +1,10 @@
 {
   "domain": "ezviz_y2000",
   "name": "EZVIZ Y2000 Lock",
-  "documentation": "https://github.com/iwanstudio/ha-ezviz-dl03-pro",
-  "issue_tracker": "https://github.com/iwanstudio/ha-ezviz-dl03-pro/issues",
+  "documentation": "https://github.com/Mohamed-Hisham/y2000",
+  "issue_tracker": "https://github.com/Mohamed-Hisham/y2000/issues",
   "dependencies": [],
-  "codeowners": [],
+  "codeowners": ["@Mohamed-Hisham"],
   "requirements": ["pyezvizapi>=1.0.5.0"],
   "version": "0.1.0",
   "config_flow": true,
