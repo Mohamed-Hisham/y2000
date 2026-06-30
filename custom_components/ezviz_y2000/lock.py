@@ -33,13 +33,24 @@ _REMOTE_LOCK_SUFFIX = "/DoorLockMgr/RemoteLockReq"
 _TERMINAL_NAME = "Hassio"
 
 
-def _dump_lock_diagnostics(client, serial: str) -> None:
-    """Log the account's door-lock users and terminals to help find the right
-    ``lockNo`` / ``userName`` when the device rejects a command ("manage failed").
+def _dump_lock_diagnostics(client, serial: str, device: dict | None = None) -> None:
+    """Log door-lock users, terminals, and the device's resourceInfos to help
+    find the right ``resourceId`` / ``localIndex`` / ``lockNo`` / ``userName``
+    when the device rejects a command ("manage failed").
 
     Logged at ERROR so it shows without enabling debug. This is the user's own
     account data in their own logs.
     """
+    # Device resourceInfos: the authoritative source for the lock's resourceId
+    # and localIndex (we currently hardcode "DoorLock"/"1", which the device's
+    # feature manager may not accept).
+    if device:
+        res = device.get("resourceInfos") or device.get("RESOURCE") or "<none>"
+        _LOGGER.error(
+            "EZVIZ Y2000 diagnostics [resourceInfos] %s | device_keys=%s",
+            res, sorted(device.keys()),
+        )
+
     base = f"https://{client._token['api_url']}"
     for label, url in (
         ("doorlock_users", f"{base}{_DOORLOCK_USERS}{serial}/users"),
@@ -227,8 +238,9 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
             await self.hass.async_add_executor_job(self._do_remote_unlock)
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Remote unlock failed for %s: %s", self._serial, err)
+            device = (self.coordinator.data or {}).get(self._serial, {})
             await self.hass.async_add_executor_job(
-                _dump_lock_diagnostics, self._client, self._serial
+                _dump_lock_diagnostics, self._client, self._serial, device
             )
             raise
 
@@ -245,8 +257,9 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         except Exception as err:  # noqa: BLE001
             # Not all firmware supports remote lock; degrade gracefully.
             _LOGGER.warning("Remote lock not confirmed for %s: %s", self._serial, err)
+            device = (self.coordinator.data or {}).get(self._serial, {})
             await self.hass.async_add_executor_job(
-                _dump_lock_diagnostics, self._client, self._serial
+                _dump_lock_diagnostics, self._client, self._serial, device
             )
 
         self.coordinator.lock_state = 0
