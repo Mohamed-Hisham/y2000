@@ -24,3 +24,11 @@ DEFAULT_RESOURCE_ID = "Video"
 
 # Seconds after a relock/unlock command before we re-poll real state.
 RELOCK_GRACE_SECONDS = 25
+
+# Legacy bind-code prefix used by pyezvizapi when no terminal bind is available.
+# Must match the value in pyezvizapi.constants so the fallback PUT is identical
+# to what the library would send.
+try:
+    from pyezvizapi.constants import FEATURE_CODE  # type: ignore[import-untyped]
+except ImportError:
+    FEATURE_CODE = ""
