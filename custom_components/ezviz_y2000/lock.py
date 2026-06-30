@@ -350,15 +350,6 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
             self._unlock_username,
         )
 
-    def _do_remote_lock(self) -> None:
-        """Lock via raw PUT, trying each bind-code candidate."""
-        resource_id, local_index = self._route()
-        _remote_action(
-            self._client, self._serial, resource_id, local_index,
-            _REMOTE_LOCK_SUFFIX, _DOOR_LOCK_NO, self._user_id, "remote_lock",
-            self._unlock_username,
-        )
-
     def _route(self) -> tuple[str, str]:
         """Resolve (resourceIdentifier, localIndex) preferring the device's
         resourceInfos over the configured defaults."""
@@ -388,17 +379,11 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         self.coordinator.async_set_updated_data(self.coordinator.data)
 
     async def async_lock(self, **kwargs) -> None:
-        """Best-effort remote lock (many Y2000 units relock physically)."""
-        try:
-            await self.hass.async_add_executor_job(self._do_remote_lock)
-        except Exception as err:  # noqa: BLE001
-            # Not all firmware supports remote lock; degrade gracefully.
-            _LOGGER.warning("Remote lock not confirmed for %s: %s", self._serial, err)
-            device = (self.coordinator.data or {}).get(self._serial, {})
-            await self.hass.async_add_executor_job(
-                _dump_lock_diagnostics, self._client, self._serial, device
-            )
-
+        """No-op: the Y2000 has no remote-lock feature (设备功能未报备); the
+        deadbolt re-engages physically. We only reset the optimistic state so the
+        entity returns to "locked" and offers the unlock action again — without
+        firing a doomed API call."""
+        _LOGGER.debug("Remote lock unsupported on %s; physical relock only", self._serial)
         self.coordinator.lock_state = 0
         self.coordinator.pending_command_until = 0.0
         self.coordinator.async_set_updated_data(self.coordinator.data)
