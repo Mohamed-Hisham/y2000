@@ -42,6 +42,23 @@ def _lock_payload(bind_code: str, lock_no: int, user_name: str) -> dict:
     }}
 
 
+def _raw_put(client, path: str, payload: dict, label: str, serial: str) -> None:
+    """PUT via the client's raw requests.Session — works on all pyezvizapi versions.
+
+    _request_json was added in 1.0.5.0; _session and _token['api_url'] have been
+    present since the earliest 1.x releases, so this is the safest fallback.
+    """
+    api_url = client._token["api_url"]
+    url = f"https://{api_url}{path}"
+    _LOGGER.debug("%s fallback PUT: serial=%s url=%s payload=%s", label, serial, url, payload)
+    resp = client._session.put(url, json=payload, timeout=30)
+    _LOGGER.debug(
+        "%s fallback response: serial=%s status=%s body=%s",
+        label, serial, resp.status_code, resp.text[:500],
+    )
+    resp.raise_for_status()
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the Y2000 lock entity."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -107,21 +124,14 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
             _LOGGER.debug("remote_unlock: result=%s", result)
             return
 
-        # Fallback for pyezvizapi < 1.0.5.0: replicate the PUT directly.
+        # Fallback: replicate the PUT using the raw session (works on all versions).
         _LOGGER.debug(
-            "remote_unlock: library lacks remote_unlock, using direct PUT for %s",
-            serial,
+            "remote_unlock: no library method, using raw session PUT for %s", serial
         )
         bind_code = f"{FEATURE_CODE}{user_id}"
         path = _iot_path(serial, resource_id, local_index, _REMOTE_UNLOCK_SUFFIX)
         payload = _lock_payload(bind_code, lock_no, user_id)
-        resp = client._request_json("PUT", path, json_body=payload, retry_401=True)
-        _LOGGER.debug(
-            "remote_unlock fallback: serial=%s path=%s response=%s",
-            serial,
-            path,
-            resp,
-        )
+        _raw_put(client, path, payload, "remote_unlock", serial)
 
     def _do_remote_lock(self) -> None:
         """Call remote_lock, falling back to a direct PUT if unavailable."""
@@ -145,19 +155,12 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
             return
 
         _LOGGER.debug(
-            "remote_lock: library lacks remote_lock, using direct PUT for %s",
-            serial,
+            "remote_lock: no library method, using raw session PUT for %s", serial
         )
         bind_code = f"{FEATURE_CODE}{user_id}"
         path = _iot_path(serial, resource_id, local_index, _REMOTE_LOCK_SUFFIX)
         payload = _lock_payload(bind_code, lock_no, user_id)
-        resp = client._request_json("PUT", path, json_body=payload, retry_401=True)
-        _LOGGER.debug(
-            "remote_lock fallback: serial=%s path=%s response=%s",
-            serial,
-            path,
-            resp,
-        )
+        _raw_put(client, path, payload, "remote_lock", serial)
 
     # ------------------------------------------------------------------
     # HA entity actions

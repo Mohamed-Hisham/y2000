@@ -18,9 +18,7 @@ CONF_RESOURCE_ID = "resource_id"
 DEFAULT_REGION = "eu"
 DEFAULT_LOCK_NO = 1
 DEFAULT_LOCAL_INDEX = "1"
-# The Y2000 reports a DoorLock resource; "Video" is the library default and
-# works for many lock+camera combos. If unlock fails, try "DoorLock".
-DEFAULT_RESOURCE_ID = "Video"
+DEFAULT_RESOURCE_ID = "DoorLock"
 
 # Seconds after a relock/unlock command before we re-poll real state.
 RELOCK_GRACE_SECONDS = 25
