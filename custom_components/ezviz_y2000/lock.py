@@ -26,10 +26,34 @@ _LOGGER = logging.getLogger(__name__)
 # Paths relative to the API base URL (https://<api_url>).
 _IOT_ACTION = "/v3/iot-feature/action/"
 _TERMINALS = "/v3/terminals"
+_DOORLOCK_USERS = "/v3/doorlocks/"
 _REMOTE_UNLOCK_SUFFIX = "/DoorLockMgr/RemoteUnlockReq"
 _REMOTE_LOCK_SUFFIX = "/DoorLockMgr/RemoteLockReq"
 # Terminal name the pyezvizapi login registers under; prefer its bind code.
 _TERMINAL_NAME = "Hassio"
+
+
+def _dump_lock_diagnostics(client, serial: str) -> None:
+    """Log the account's door-lock users and terminals to help find the right
+    ``lockNo`` / ``userName`` when the device rejects a command ("manage failed").
+
+    Logged at ERROR so it shows without enabling debug. This is the user's own
+    account data in their own logs.
+    """
+    base = f"https://{client._token['api_url']}"
+    for label, url in (
+        ("doorlock_users", f"{base}{_DOORLOCK_USERS}{serial}/users"),
+        ("terminals", f"{base}{_TERMINALS}"),
+    ):
+        try:
+            params = {"limit": 20, "offset": 0} if label == "terminals" else None
+            resp = client._session.get(url, params=params, timeout=30)
+            _LOGGER.error(
+                "EZVIZ Y2000 diagnostics [%s] status=%s body=%s",
+                label, resp.status_code, resp.text[:1500],
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("EZVIZ Y2000 diagnostics [%s] fetch failed: %s", label, err)
 
 
 def _iot_path(serial: str, resource_id: str, local_index: str, suffix: str) -> str:
@@ -203,6 +227,9 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
             await self.hass.async_add_executor_job(self._do_remote_unlock)
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Remote unlock failed for %s: %s", self._serial, err)
+            await self.hass.async_add_executor_job(
+                _dump_lock_diagnostics, self._client, self._serial
+            )
             raise
 
         # Optimistic state; protect it from the listener's auto-relock briefly.
@@ -218,6 +245,9 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         except Exception as err:  # noqa: BLE001
             # Not all firmware supports remote lock; degrade gracefully.
             _LOGGER.warning("Remote lock not confirmed for %s: %s", self._serial, err)
+            await self.hass.async_add_executor_job(
+                _dump_lock_diagnostics, self._client, self._serial
+            )
 
         self.coordinator.lock_state = 0
         self.coordinator.pending_command_until = 0.0
