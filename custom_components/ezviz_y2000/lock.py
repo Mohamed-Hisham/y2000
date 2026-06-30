@@ -71,6 +71,29 @@ def _iot_path(serial: str, resource_id: str, local_index: str, suffix: str) -> s
     return f"{_IOT_ACTION}{serial}/{resource_id}/{local_index}{suffix}"
 
 
+def _resolve_route(device: dict | None, default_resource: str, default_index: str):
+    """Resolve (resourceIdentifier, localIndex) for the IoT action route.
+
+    The device's ``resourceInfos`` is authoritative — e.g. the Y2000 reports
+    ``resourceIdentifier="DoorLock"`` with ``localIndex="0"``, while our defaults
+    assumed index "1". Prefer the device's DoorLock resource; fall back to the
+    configured/default values when it isn't present.
+    """
+    for res in (device or {}).get("resourceInfos") or []:
+        if not isinstance(res, dict):
+            continue
+        category = str(res.get("resourceCategory") or res.get("resourceIdentifier") or "")
+        if category.casefold() == "doorlock":
+            identifier = res.get("resourceIdentifier") or default_resource
+            local_index = str(res.get("localIndex", default_index))
+            _LOGGER.debug(
+                "resolved route from resourceInfos: resource=%s local_index=%s",
+                identifier, local_index,
+            )
+            return identifier, local_index
+    return default_resource, default_index
+
+
 def _lock_payload(bind_code: str, lock_no: int, user_name: str) -> dict:
     return {"unLockInfo": {
         "bindCode": bind_code,
@@ -211,22 +234,26 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         EZVIZ error if the call fails.
         """
         client = self._client
+        resource_id, local_index = self._route()
         bind_code, user_name = _resolve_bind_code(client, self._user_id)
-        path = _iot_path(
-            self._serial, self._resource_id, self._local_index, _REMOTE_UNLOCK_SUFFIX
-        )
+        path = _iot_path(self._serial, resource_id, local_index, _REMOTE_UNLOCK_SUFFIX)
         payload = _lock_payload(bind_code, self._lock_no, user_name)
         _raw_put(client, path, payload, "remote_unlock", self._serial)
 
     def _do_remote_lock(self) -> None:
         """Lock via a raw PUT (see ``_do_remote_unlock`` for rationale)."""
         client = self._client
+        resource_id, local_index = self._route()
         bind_code, user_name = _resolve_bind_code(client, self._user_id)
-        path = _iot_path(
-            self._serial, self._resource_id, self._local_index, _REMOTE_LOCK_SUFFIX
-        )
+        path = _iot_path(self._serial, resource_id, local_index, _REMOTE_LOCK_SUFFIX)
         payload = _lock_payload(bind_code, self._lock_no, user_name)
         _raw_put(client, path, payload, "remote_lock", self._serial)
+
+    def _route(self) -> tuple[str, str]:
+        """Resolve (resourceIdentifier, localIndex) preferring the device's
+        resourceInfos over the configured defaults."""
+        device = (self.coordinator.data or {}).get(self._serial, {})
+        return _resolve_route(device, self._resource_id, self._local_index)
 
     # ------------------------------------------------------------------
     # HA entity actions

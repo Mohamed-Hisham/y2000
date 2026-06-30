@@ -17,7 +17,9 @@ CONF_RESOURCE_ID = "resource_id"
 
 DEFAULT_REGION = "eu"
 DEFAULT_LOCK_NO = 1
-DEFAULT_LOCAL_INDEX = "1"
+# Y2000 reports its DoorLock resource at localIndex 0 (resolved live from the
+# device's resourceInfos; this is only the fallback).
+DEFAULT_LOCAL_INDEX = "0"
 DEFAULT_RESOURCE_ID = "DoorLock"
 
 # Seconds after a relock/unlock command before we re-poll real state.
