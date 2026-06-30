@@ -75,13 +75,14 @@ def _iot_path(serial: str, resource_id: str, local_index: str, suffix: str) -> s
 
 
 def _resolve_route(device: dict | None, default_resource: str, default_index: str):
-    """Resolve (resourceId, localIndex) for the IoT action route.
+    """Resolve (resourceIdentifier, localIndex) for the IoT action route.
 
-    The device's ``resourceInfos`` is authoritative. Matching pyezvizapi's own
-    ``Camera._resource_route``, the route segment is the resource's ``resourceId``
-    (a UUID such as ``ff93cc3d...``) — NOT the ``resourceIdentifier`` string
-    ("DoorLock"). The Y2000 reports ``localIndex="0"``. Prefer the DoorLock
-    resource entry; fall back to the configured/default values when absent.
+    Empirically, the route segment for this device is the ``resourceIdentifier``
+    string ("DoorLock") — that path reaches the device's DoorLockMgr feature.
+    The ``resourceId`` UUID, by contrast, returns "设备功能未报备" ("device
+    function not reported"), i.e. that resource has no such feature. The Y2000
+    reports ``localIndex="0"``. Prefer the DoorLock entry; fall back to the
+    configured/default values when absent.
     """
     infos = (device or {}).get("resourceInfos") or []
     doorlock = None
@@ -97,10 +98,10 @@ def _resolve_route(device: dict | None, default_resource: str, default_index: st
         doorlock = next((r for r in infos if isinstance(r, dict)), None)
 
     if doorlock:
-        resource_id = doorlock.get("resourceId") or default_resource
+        resource_id = doorlock.get("resourceIdentifier") or default_resource
         local_index = str(doorlock.get("localIndex", default_index))
         _LOGGER.debug(
-            "resolved route from resourceInfos: resourceId=%s local_index=%s",
+            "resolved route from resourceInfos: resource=%s local_index=%s",
             resource_id, local_index,
         )
         return resource_id, local_index
