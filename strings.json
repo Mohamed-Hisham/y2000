@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EZVIZ Y2000 — Login",
+        "data": {
+          "username": "Email / Username",
+          "password": "Password",
+          "serial_number": "Device Serial Number",
+          "region": "Region (eu, us, etc.)"
+        }
+      },
+      "lock_params": {
+        "title": "EZVIZ Y2000 — Lock parameters",
+        "description": "user_id is usually auto-filled. lock_no/local_index default to 1. If remote unlock fails, try resource_id = DoorLock.",
+        "data": {
+          "user_id": "User ID",
+          "lock_no": "Lock number",
+          "local_index": "Local channel index",
+          "resource_id": "Resource ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to EZVIZ",
+      "invalid_auth": "Invalid login or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This lock is already configured"
+    }
+  }
+}

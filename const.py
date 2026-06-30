@@ -1,0 +1,26 @@
+"""Constants for the EZVIZ Y2000 integration."""
+
+DOMAIN = "ezviz_y2000"
+
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
+CONF_SERIAL = "serial_number"
+CONF_REGION = "region"
+
+# Lock-control parameters. These are device/account specific and EZVIZ does
+# not document them. Defaults below work for most single-channel locks; expose
+# them in the config flow so they can be overridden per device.
+CONF_USER_ID = "user_id"
+CONF_LOCK_NO = "lock_no"
+CONF_LOCAL_INDEX = "local_index"
+CONF_RESOURCE_ID = "resource_id"
+
+DEFAULT_REGION = "eu"
+DEFAULT_LOCK_NO = 1
+DEFAULT_LOCAL_INDEX = "1"
+# The Y2000 reports a DoorLock resource; "Video" is the library default and
+# works for many lock+camera combos. If unlock fails, try "DoorLock".
+DEFAULT_RESOURCE_ID = "Video"
+
+# Seconds after a relock/unlock command before we re-poll real state.
+RELOCK_GRACE_SECONDS = 25
