@@ -25,8 +25,11 @@ _LOGGER = logging.getLogger(__name__)
 
 # Paths relative to the API base URL (https://<api_url>).
 _IOT_ACTION = "/v3/iot-feature/action/"
+_TERMINALS = "/v3/terminals"
 _REMOTE_UNLOCK_SUFFIX = "/DoorLockMgr/RemoteUnlockReq"
 _REMOTE_LOCK_SUFFIX = "/DoorLockMgr/RemoteLockReq"
+# Terminal name the pyezvizapi login registers under; prefer its bind code.
+_TERMINAL_NAME = "Hassio"
 
 
 def _iot_path(serial: str, resource_id: str, local_index: str, suffix: str) -> str:
@@ -42,6 +45,61 @@ def _lock_payload(bind_code: str, lock_no: int, user_name: str) -> dict:
     }}
 
 
+def _resolve_bind_code(client, user_id: str) -> tuple[str, str]:
+    """Return (bindCode, userName) for the lock payload.
+
+    EZVIZ rejects (HTTP 400) the legacy ``FEATURE_CODE + user_id`` bind code on
+    many accounts. The correct bind code comes from the account's terminal info
+    (``sign + userId``). Prefer the library helper; otherwise fetch it directly.
+    Fall back to the legacy code only if no terminal bind is available.
+    """
+    # Native helper (pyezvizapi >= 1.0.5.0).
+    if hasattr(client, "get_latest_terminal_bind"):
+        try:
+            bind_code, user_name = client.get_latest_terminal_bind(
+                terminal_name=_TERMINAL_NAME
+            )
+            _LOGGER.debug("bind code via library terminal bind: userName=%s", user_name)
+            return bind_code, user_name
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("library terminal bind unavailable: %s", err)
+
+    # Raw fetch of /v3/terminals for older library versions.
+    try:
+        url = f"https://{client._token['api_url']}{_TERMINALS}"
+        resp = client._session.get(url, params={"limit": 20, "offset": 0}, timeout=30)
+        resp.raise_for_status()
+        terminals = (resp.json() or {}).get("terminals") or []
+        items = [
+            t for t in terminals
+            if isinstance(t, dict)
+            and str(t.get("sign") or "").strip()
+            and str(t.get("userId") or "").strip()
+        ]
+        named = [
+            t for t in items
+            if str(t.get("name") or t.get("terminalName") or "").casefold()
+            == _TERMINAL_NAME.casefold()
+        ]
+        chosen = named or items
+        if chosen:
+            best = max(
+                chosen,
+                key=lambda t: str(t.get("lastModifytime") or t.get("lastModifyTime") or ""),
+            )
+            sign = str(best["sign"]).strip()
+            term_uid = str(best["userId"]).strip()
+            user_name = best.get("name") or best.get("terminalName") or term_uid
+            _LOGGER.debug("bind code via raw terminals fetch: userName=%s", user_name)
+            return f"{sign}{term_uid}", str(user_name)
+        _LOGGER.debug("no usable terminal bind found in /v3/terminals")
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("raw terminal bind fetch failed: %s", err)
+
+    _LOGGER.debug("falling back to legacy bind code (FEATURE_CODE + user_id)")
+    return f"{FEATURE_CODE}{user_id}", user_id
+
+
 def _raw_put(client, path: str, payload: dict, label: str, serial: str) -> None:
     """PUT via the client's raw requests.Session — works on all pyezvizapi versions.
 
@@ -52,11 +110,16 @@ def _raw_put(client, path: str, payload: dict, label: str, serial: str) -> None:
     url = f"https://{api_url}{path}"
     _LOGGER.debug("%s fallback PUT: serial=%s url=%s payload=%s", label, serial, url, payload)
     resp = client._session.put(url, json=payload, timeout=30)
+    body = resp.text[:500]
     _LOGGER.debug(
         "%s fallback response: serial=%s status=%s body=%s",
-        label, serial, resp.status_code, resp.text[:500],
+        label, serial, resp.status_code, body,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        # Surface the EZVIZ response body so the HA action toast is actionable.
+        raise RuntimeError(
+            f"{label} failed: HTTP {resp.status_code} for {url} — response: {body}"
+        )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -104,63 +167,31 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
     # ------------------------------------------------------------------
 
     def _do_remote_unlock(self) -> None:
-        """Call remote_unlock, falling back to a direct PUT if unavailable."""
+        """Unlock via a raw PUT so we control the bind code and surface errors.
+
+        We deliberately do not defer to ``client.remote_unlock`` because that
+        path silently falls back to the legacy bind code (which EZVIZ rejects
+        with HTTP 400 on many accounts) and hides the response body. Building the
+        request here lets us resolve the terminal bind code and log the exact
+        EZVIZ error if the call fails.
+        """
         client = self._client
-        serial = self._serial
-        resource_id = self._resource_id
-        local_index = self._local_index
-        user_id = self._user_id
-        lock_no = self._lock_no
-
-        if hasattr(client, "remote_unlock"):
-            _LOGGER.debug("remote_unlock: using library method for %s", serial)
-            result = client.remote_unlock(
-                serial,
-                user_id,
-                lock_no,
-                resource_id=resource_id,
-                local_index=local_index,
-            )
-            _LOGGER.debug("remote_unlock: result=%s", result)
-            return
-
-        # Fallback: replicate the PUT using the raw session (works on all versions).
-        _LOGGER.debug(
-            "remote_unlock: no library method, using raw session PUT for %s", serial
+        bind_code, user_name = _resolve_bind_code(client, self._user_id)
+        path = _iot_path(
+            self._serial, self._resource_id, self._local_index, _REMOTE_UNLOCK_SUFFIX
         )
-        bind_code = f"{FEATURE_CODE}{user_id}"
-        path = _iot_path(serial, resource_id, local_index, _REMOTE_UNLOCK_SUFFIX)
-        payload = _lock_payload(bind_code, lock_no, user_id)
-        _raw_put(client, path, payload, "remote_unlock", serial)
+        payload = _lock_payload(bind_code, self._lock_no, user_name)
+        _raw_put(client, path, payload, "remote_unlock", self._serial)
 
     def _do_remote_lock(self) -> None:
-        """Call remote_lock, falling back to a direct PUT if unavailable."""
+        """Lock via a raw PUT (see ``_do_remote_unlock`` for rationale)."""
         client = self._client
-        serial = self._serial
-        resource_id = self._resource_id
-        local_index = self._local_index
-        user_id = self._user_id
-        lock_no = self._lock_no
-
-        if hasattr(client, "remote_lock"):
-            _LOGGER.debug("remote_lock: using library method for %s", serial)
-            result = client.remote_lock(
-                serial,
-                user_id,
-                lock_no,
-                resource_id=resource_id,
-                local_index=local_index,
-            )
-            _LOGGER.debug("remote_lock: result=%s", result)
-            return
-
-        _LOGGER.debug(
-            "remote_lock: no library method, using raw session PUT for %s", serial
+        bind_code, user_name = _resolve_bind_code(client, self._user_id)
+        path = _iot_path(
+            self._serial, self._resource_id, self._local_index, _REMOTE_LOCK_SUFFIX
         )
-        bind_code = f"{FEATURE_CODE}{user_id}"
-        path = _iot_path(serial, resource_id, local_index, _REMOTE_LOCK_SUFFIX)
-        payload = _lock_payload(bind_code, lock_no, user_id)
-        _raw_put(client, path, payload, "remote_lock", serial)
+        payload = _lock_payload(bind_code, self._lock_no, user_name)
+        _raw_put(client, path, payload, "remote_lock", self._serial)
 
     # ------------------------------------------------------------------
     # HA entity actions
