@@ -76,6 +76,7 @@ class EzvizEventSensor(_Base):
 
 class EzvizWifiSignalSensor(_Base):
     _attr_name = "Wi-Fi Signal"
+    _attr_icon = "mdi:wifi"
     _attr_native_unit_of_measurement = "%"
 
     def __init__(self, coordinator, serial):
