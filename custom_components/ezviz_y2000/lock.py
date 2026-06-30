@@ -135,18 +135,26 @@ def _fetch_terminals(client) -> list[dict]:
         return []
 
 
-def _bind_candidates(client, user_id: str) -> list[tuple[str, str, str]]:
-    """Build an ordered list of (bindCode, userName, source) to try.
+def _fetch_lock_users(client, serial: str) -> list[dict]:
+    """Return the lock's enrolled users (each has index + name/realName)."""
+    try:
+        url = f"https://{client._token['api_url']}{_DOORLOCK_USERS}{serial}/users"
+        resp = client._session.get(url, timeout=30)
+        resp.raise_for_status()
+        return [u for u in (resp.json() or {}).get("users") or [] if isinstance(u, dict)]
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("lock user fetch failed: %s", err)
+        return []
 
-    The ``bindCode`` is ``sign + userId`` and ``sign`` is per-login-session. When
-    the same EZVIZ account is logged in by more than one integration (e.g. HA's
-    core ``ezviz`` plus this one) there are several "Hassio" terminals and we
-    cannot tell which session is ours from the API. So instead of guessing, we
-    try every terminal's bind code (newest first), then the legacy code, and
-    stop at whichever the device accepts.
+
+def _bind_codes(client, user_id: str) -> list[tuple[str, str, str]]:
+    """Ordered list of (bindCode, terminalName, source).
+
+    ``bindCode`` is ``sign + userId`` and ``sign`` is per-login-session. We try
+    every terminal's bind code (newest "Hassio" first, then others) plus the
+    legacy code, and stop at whichever the device accepts.
     """
     terminals = _fetch_terminals(client)
-    # Prefer "Hassio" terminals, newest first; then any other terminals.
     hassio = [
         t for t in terminals
         if str(t.get("name") or t.get("terminalName") or "").casefold()
@@ -158,22 +166,47 @@ def _bind_candidates(client, user_id: str) -> list[tuple[str, str, str]]:
         reverse=True,
     ) + others
 
-    candidates: list[tuple[str, str, str]] = []
+    codes: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for t in ordered:
         sign = str(t["sign"]).strip()
         term_uid = str(t["userId"]).strip()
         name = str(t.get("name") or t.get("terminalName") or term_uid)
         bind = f"{sign}{term_uid}"
-        if bind in seen:
-            continue
-        seen.add(bind)
-        candidates.append((bind, name, f"terminal:{name}:{sign[:8]}"))
+        if bind not in seen:
+            seen.add(bind)
+            codes.append((bind, name, f"terminal:{name}:{sign[:8]}"))
 
     legacy = f"{FEATURE_CODE}{user_id}"
     if legacy not in seen:
-        candidates.append((legacy, user_id, "legacy:feature_code"))
-    return candidates
+        codes.append((legacy, user_id, "legacy:feature_code"))
+    return codes
+
+
+def _user_names(client, serial: str, terminal_names: list[str], user_id: str) -> list[str]:
+    """Ordered userName candidates for the unlock payload.
+
+    The device's authorized-unlock whitelist is keyed by user, so the enrolled
+    door-lock users (e.g. "Dudu") come first, then the account/terminal names.
+    """
+    names: list[str] = []
+
+    def add(v):
+        v = str(v or "").strip()
+        if v and v not in names:
+            names.append(v)
+
+    for u in _fetch_lock_users(client, serial):
+        add(u.get("name"))
+        add(u.get("remarkName"))
+        add(u.get("realName"))
+        add(u.get("index"))
+    account = str(getattr(client, "_token", {}).get("username", ""))
+    add(account)
+    for n in terminal_names:
+        add(n)
+    add(user_id)
+    return names
 
 
 def _try_put(client, path: str, payload: dict, serial: str) -> tuple[bool, int, str]:
@@ -201,24 +234,37 @@ def _try_put(client, path: str, payload: dict, serial: str) -> tuple[bool, int, 
 
 def _remote_action(client, serial: str, resource_id: str, local_index: str,
                    suffix: str, lock_no: int, user_id: str, label: str) -> None:
-    """Try each bind-code candidate until the device accepts the command."""
-    candidates = _bind_candidates(client, user_id)
-    if not candidates:
+    """Try userName x bindCode combinations until the device accepts the command.
+
+    The lock's authorized-unlock whitelist is keyed by user, and our HA terminal
+    ("Hassio") cannot be added to it via the app. So we sweep the enrolled
+    door-lock user names (e.g. "Dudu") as ``userName`` against every terminal
+    bind code, stopping at the first combination the device accepts.
+    """
+    codes = _bind_codes(client, user_id)
+    if not codes:
         raise RuntimeError(f"{label} failed: no bind-code candidates available")
+    terminal_names = [name for _, name, _ in codes]
+    user_names = _user_names(client, serial, terminal_names, user_id)
 
     path = _iot_path(serial, resource_id, local_index, suffix)
     last_status, last_body = 0, ""
-    for bind_code, user_name, source in candidates:
-        payload = _lock_payload(bind_code, lock_no, user_name)
-        ok, status, body = _try_put(client, path, payload, serial)
-        if ok:
-            _LOGGER.debug("%s succeeded via %s", label, source)
-            return
-        last_status, last_body = status, body
-        _LOGGER.debug("%s candidate %s rejected (status=%s)", label, source, status)
+    attempts = 0
+    for user_name in user_names:
+        for bind_code, _name, source in codes:
+            attempts += 1
+            payload = _lock_payload(bind_code, lock_no, user_name)
+            ok, status, body = _try_put(client, path, payload, serial)
+            if ok:
+                _LOGGER.debug(
+                    "%s succeeded: userName=%s via %s", label, user_name, source
+                )
+                return
+            last_status, last_body = status, body
 
     raise RuntimeError(
-        f"{label} failed after trying {len(candidates)} bind code(s); "
+        f"{label} failed after {attempts} attempt(s) "
+        f"({len(user_names)} userName x {len(codes)} bindCode); "
         f"last HTTP {last_status} for {path} — response: {last_body}"
     )
 
