@@ -6,7 +6,7 @@
   "dependencies": [],
   "codeowners": ["@Mohamed-Hisham"],
   "requirements": ["pyezvizapi==1.0.0.7"],
-  "version": "0.2.7",
+  "version": "0.2.8",
   "config_flow": true,
   "iot_class": "cloud_polling"
 }

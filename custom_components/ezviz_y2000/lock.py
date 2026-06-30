@@ -31,6 +31,9 @@ _REMOTE_UNLOCK_SUFFIX = "/DoorLockMgr/RemoteUnlockReq"
 _REMOTE_LOCK_SUFFIX = "/DoorLockMgr/RemoteLockReq"
 # Terminal name the pyezvizapi login registers under; prefer its bind code.
 _TERMINAL_NAME = "Hassio"
+# pyezvizapi's Camera.door_unlock uses lockNo 2 for the door (gate = 1). This is
+# a fixed convention, independent of the door-lock user index.
+_DOOR_LOCK_NO = 2
 
 
 def _dump_lock_diagnostics(client, serial: str, device: dict | None = None) -> None:
@@ -72,25 +75,35 @@ def _iot_path(serial: str, resource_id: str, local_index: str, suffix: str) -> s
 
 
 def _resolve_route(device: dict | None, default_resource: str, default_index: str):
-    """Resolve (resourceIdentifier, localIndex) for the IoT action route.
+    """Resolve (resourceId, localIndex) for the IoT action route.
 
-    The device's ``resourceInfos`` is authoritative — e.g. the Y2000 reports
-    ``resourceIdentifier="DoorLock"`` with ``localIndex="0"``, while our defaults
-    assumed index "1". Prefer the device's DoorLock resource; fall back to the
-    configured/default values when it isn't present.
+    The device's ``resourceInfos`` is authoritative. Matching pyezvizapi's own
+    ``Camera._resource_route``, the route segment is the resource's ``resourceId``
+    (a UUID such as ``ff93cc3d...``) — NOT the ``resourceIdentifier`` string
+    ("DoorLock"). The Y2000 reports ``localIndex="0"``. Prefer the DoorLock
+    resource entry; fall back to the configured/default values when absent.
     """
-    for res in (device or {}).get("resourceInfos") or []:
+    infos = (device or {}).get("resourceInfos") or []
+    doorlock = None
+    for res in infos:
         if not isinstance(res, dict):
             continue
         category = str(res.get("resourceCategory") or res.get("resourceIdentifier") or "")
         if category.casefold() == "doorlock":
-            identifier = res.get("resourceIdentifier") or default_resource
-            local_index = str(res.get("localIndex", default_index))
-            _LOGGER.debug(
-                "resolved route from resourceInfos: resource=%s local_index=%s",
-                identifier, local_index,
-            )
-            return identifier, local_index
+            doorlock = res
+            break
+    # Fall back to the first resource entry if no explicit DoorLock category.
+    if doorlock is None:
+        doorlock = next((r for r in infos if isinstance(r, dict)), None)
+
+    if doorlock:
+        resource_id = doorlock.get("resourceId") or default_resource
+        local_index = str(doorlock.get("localIndex", default_index))
+        _LOGGER.debug(
+            "resolved route from resourceInfos: resourceId=%s local_index=%s",
+            resource_id, local_index,
+        )
+        return resource_id, local_index
     return default_resource, default_index
 
 
@@ -258,7 +271,7 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         resource_id, local_index = self._route()
         _remote_action(
             self._client, self._serial, resource_id, local_index,
-            _REMOTE_UNLOCK_SUFFIX, self._lock_no, self._user_id, "remote_unlock",
+            _REMOTE_UNLOCK_SUFFIX, _DOOR_LOCK_NO, self._user_id, "remote_unlock",
         )
 
     def _do_remote_lock(self) -> None:
@@ -266,7 +279,7 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         resource_id, local_index = self._route()
         _remote_action(
             self._client, self._serial, resource_id, local_index,
-            _REMOTE_LOCK_SUFFIX, self._lock_no, self._user_id, "remote_lock",
+            _REMOTE_LOCK_SUFFIX, _DOOR_LOCK_NO, self._user_id, "remote_lock",
         )
 
     def _route(self) -> tuple[str, str]:
