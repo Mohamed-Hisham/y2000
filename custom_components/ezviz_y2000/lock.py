@@ -12,7 +12,9 @@ from .const import (
     CONF_LOCAL_INDEX,
     CONF_LOCK_NO,
     CONF_RESOURCE_ID,
+    CONF_UNLOCK_USERNAME,
     CONF_USER_ID,
+    CONF_USERNAME,
     DEFAULT_LOCAL_INDEX,
     DEFAULT_LOCK_NO,
     DEFAULT_RESOURCE_ID,
@@ -183,11 +185,14 @@ def _bind_codes(client, user_id: str) -> list[tuple[str, str, str]]:
     return codes
 
 
-def _user_names(client, serial: str, terminal_names: list[str], user_id: str) -> list[str]:
+def _user_names(client, serial: str, terminal_names: list[str], user_id: str,
+                primary: str | None = None) -> list[str]:
     """Ordered userName candidates for the unlock payload.
 
-    The device's authorized-unlock whitelist is keyed by user, so the enrolled
-    door-lock users (e.g. "Dudu") come first, then the account/terminal names.
+    The configured unlock username (the account email, set on the config page)
+    is tried first, then the enrolled door-lock users (e.g. "Dudu"), then the
+    account/terminal names — sweeping is just a fallback if the configured value
+    is wrong.
     """
     names: list[str] = []
 
@@ -196,6 +201,7 @@ def _user_names(client, serial: str, terminal_names: list[str], user_id: str) ->
         if v and v not in names:
             names.append(v)
 
+    add(primary)
     for u in _fetch_lock_users(client, serial):
         add(u.get("name"))
         add(u.get("remarkName"))
@@ -233,19 +239,20 @@ def _try_put(client, path: str, payload: dict, serial: str) -> tuple[bool, int, 
 
 
 def _remote_action(client, serial: str, resource_id: str, local_index: str,
-                   suffix: str, lock_no: int, user_id: str, label: str) -> None:
+                   suffix: str, lock_no: int, user_id: str, label: str,
+                   unlock_username: str | None = None) -> None:
     """Try userName x bindCode combinations until the device accepts the command.
 
-    The lock's authorized-unlock whitelist is keyed by user, and our HA terminal
-    ("Hassio") cannot be added to it via the app. So we sweep the enrolled
-    door-lock user names (e.g. "Dudu") as ``userName`` against every terminal
-    bind code, stopping at the first combination the device accepts.
+    The configured unlock username (account email) is tried first; if it is
+    wrong we fall back to sweeping the enrolled door-lock users (e.g. "Dudu")
+    and terminal names against every bind code, stopping at the first
+    combination the device accepts.
     """
     codes = _bind_codes(client, user_id)
     if not codes:
         raise RuntimeError(f"{label} failed: no bind-code candidates available")
     terminal_names = [name for _, name, _ in codes]
-    user_names = _user_names(client, serial, terminal_names, user_id)
+    user_names = _user_names(client, serial, terminal_names, user_id, unlock_username)
 
     path = _iot_path(serial, resource_id, local_index, suffix)
     last_status, last_body = 0, ""
@@ -304,6 +311,10 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         self._lock_no = int(data.get(CONF_LOCK_NO, DEFAULT_LOCK_NO))
         self._local_index = str(data.get(CONF_LOCAL_INDEX, DEFAULT_LOCAL_INDEX))
         self._resource_id = data.get(CONF_RESOURCE_ID, DEFAULT_RESOURCE_ID)
+        # userName for the unlock payload — the account email by default.
+        self._unlock_username = (
+            data.get(CONF_UNLOCK_USERNAME) or data.get(CONF_USERNAME) or ""
+        )
 
     @property
     def is_locked(self) -> bool | None:
@@ -319,6 +330,7 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         _remote_action(
             self._client, self._serial, resource_id, local_index,
             _REMOTE_UNLOCK_SUFFIX, _DOOR_LOCK_NO, self._user_id, "remote_unlock",
+            self._unlock_username,
         )
 
     def _do_remote_lock(self) -> None:
@@ -327,6 +339,7 @@ class EzvizY2000Lock(CoordinatorEntity, LockEntity):
         _remote_action(
             self._client, self._serial, resource_id, local_index,
             _REMOTE_LOCK_SUFFIX, _DOOR_LOCK_NO, self._user_id, "remote_lock",
+            self._unlock_username,
         )
 
     def _route(self) -> tuple[str, str]:

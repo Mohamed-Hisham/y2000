@@ -16,6 +16,7 @@ from .const import (
     CONF_REGION,
     CONF_RESOURCE_ID,
     CONF_SERIAL,
+    CONF_UNLOCK_USERNAME,
     CONF_USER_ID,
     CONF_USERNAME,
     DEFAULT_LOCAL_INDEX,
@@ -128,6 +129,10 @@ class EzvizY2000ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(
                     CONF_USER_ID, default=self._data.get(CONF_USER_ID, "")
+                ): str,
+                vol.Optional(
+                    CONF_UNLOCK_USERNAME,
+                    default=self._data.get(CONF_USERNAME, ""),
                 ): str,
                 vol.Optional(CONF_LOCK_NO, default=DEFAULT_LOCK_NO): int,
                 vol.Optional(CONF_LOCAL_INDEX, default=DEFAULT_LOCAL_INDEX): str,

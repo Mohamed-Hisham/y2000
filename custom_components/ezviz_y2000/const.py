@@ -14,6 +14,10 @@ CONF_USER_ID = "user_id"
 CONF_LOCK_NO = "lock_no"
 CONF_LOCAL_INDEX = "local_index"
 CONF_RESOURCE_ID = "resource_id"
+# userName sent in the unlock payload. EZVIZ keys the lock's authorized-unlock
+# whitelist by user; for the owner this is the account email. Defaults to the
+# login email; override per device if a different authorized user is required.
+CONF_UNLOCK_USERNAME = "unlock_username"
 
 DEFAULT_REGION = "eu"
 DEFAULT_LOCK_NO = 1

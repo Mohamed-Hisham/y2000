@@ -12,9 +12,10 @@
       },
       "lock_params": {
         "title": "EZVIZ Y2000 — Lock parameters",
-        "description": "user_id is usually auto-filled. lock_no/local_index default to 1. If remote unlock fails, try resource_id = DoorLock.",
+        "description": "user_id is usually auto-filled. The unlock username defaults to your account email (the authorized unlock user). lock_no/local_index/resource_id are resolved from the device automatically.",
         "data": {
           "user_id": "User ID",
+          "unlock_username": "Unlock username (email of an authorized user)",
           "lock_no": "Lock number",
           "local_index": "Local channel index",
           "resource_id": "Resource ID"
