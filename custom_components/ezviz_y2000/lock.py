@@ -238,6 +238,16 @@ def _try_put(client, path: str, payload: dict, serial: str) -> tuple[bool, int, 
     return ok, resp.status_code, body
 
 
+def _is_unsupported(body: str) -> bool:
+    """True when the device says the feature is not registered/supported.
+
+    EZVIZ returns ``设备功能未报备`` ("device function not reported") for actions
+    the device doesn't implement (e.g. remote *lock* on locks that only relock
+    physically). This is permanent, so there is no point sweeping candidates.
+    """
+    return "未报备" in body or "not report" in body.lower()
+
+
 def _remote_action(client, serial: str, resource_id: str, local_index: str,
                    suffix: str, lock_no: int, user_id: str, label: str,
                    unlock_username: str | None = None) -> None:
@@ -268,6 +278,13 @@ def _remote_action(client, serial: str, resource_id: str, local_index: str,
                 )
                 return
             last_status, last_body = status, body
+            # Feature genuinely unsupported by the device (e.g. remote lock on a
+            # lock that only relocks physically): no candidate will ever work.
+            if _is_unsupported(body):
+                raise RuntimeError(
+                    f"{label} not supported by device (设备功能未报备); "
+                    f"path {path}"
+                )
 
     raise RuntimeError(
         f"{label} failed after {attempts} attempt(s) "
